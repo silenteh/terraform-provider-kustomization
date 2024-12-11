@@ -31,11 +31,11 @@ func kustomizationResource() *schema.Resource {
 		},
 
 		Schema: map[string]*schema.Schema{
-			"manifest": &schema.Schema{
+			"manifest": {
 				Type:     schema.TypeString,
 				Required: true,
 			},
-			"wait": &schema.Schema{
+			"wait": {
 				Type:     schema.TypeBool,
 				Default:  false,
 				Optional: true,
@@ -139,7 +139,10 @@ func kustomizationResourceRead(d *schema.ResourceData, m interface{}) error {
 	id := string(resp.GetUID())
 	d.SetId(id)
 
-	d.Set("manifest", getLastAppliedConfig(resp, m.(*Config).GzipLastAppliedConfig))
+	err = d.Set("manifest", getLastAppliedConfig(resp, m.(*Config).GzipLastAppliedConfig))
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -245,9 +248,15 @@ func kustomizationResourceDiff(ctx context.Context, d *schema.ResourceDiff, m in
 
 	if kmo.name() != kmm.name() || kmo.namespace() != kmm.namespace() {
 		// if the resource name or namespace changes, we can't patch but have to destroy and re-create
-		d.ForceNew("manifest")
+		err := d.ForceNew("manifest")
+		if err != nil {
+			return err
+		}
 		return nil
 	}
+
+	result := getLiveManifestFields_WithIgnoredFields(kubernetesControlFields, kmm, kmo)
+	fmt.Printf("%+v", result)
 
 	pt, p, err := kmm.apiPreparePatch(kmo, true)
 	if err != nil {
@@ -268,26 +277,38 @@ func kustomizationResourceDiff(ctx context.Context, d *schema.ResourceDiff, m in
 
 				// if cause is immutable field force a delete and re-create plan
 				if k8serrors.HasStatusCause(err, k8smetav1.CauseTypeFieldValueInvalid) && strings.HasSuffix(msg, ": field is immutable") == true {
-					d.ForceNew("manifest")
+					err := d.ForceNew("manifest")
+					if err != nil {
+						return err
+					}
 					return nil
 				}
 
 				// if cause is statefulset forbidden fields error force a delete and re-create plan
 				if k8serrors.HasStatusCause(err, k8smetav1.CauseType(field.ErrorTypeForbidden)) && strings.HasPrefix(msg, "Forbidden: updates to statefulset spec for fields") == true {
-					d.ForceNew("manifest")
+					err := d.ForceNew("manifest")
+					if err != nil {
+						return err
+					}
 					return nil
 				}
 
 				// if cause is cannot change roleRef force a delete and re-create plan
 				if k8serrors.HasStatusCause(err, k8smetav1.CauseTypeFieldValueInvalid) && strings.HasSuffix(msg, ": cannot change roleRef") == true {
-					d.ForceNew("manifest")
+					err := d.ForceNew("manifest")
+					if err != nil {
+						return err
+					}
 					return nil
 				}
 
 				// if cause is updates to storage class provisioner or parameters are forbidden force a delete and re-create plan
 				if k8serrors.HasStatusCause(err, k8smetav1.CauseType(field.ErrorTypeForbidden)) {
 					if strings.HasSuffix(msg, ": updates to provisioner are forbidden.") || strings.HasPrefix(msg, "Forbidden: updates to parameters are forbidden") {
-						d.ForceNew("manifest")
+						err := d.ForceNew("manifest")
+						if err != nil {
+							return err
+						}
 						return nil
 					}
 				}

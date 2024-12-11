@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"runtime"
+	"sort"
 	"strings"
 
 	k8scorev1 "k8s.io/api/core/v1"
@@ -45,7 +46,7 @@ func setLastAppliedConfig(km *kManifest, gzipLastAppliedConfig bool) {
 			var buf bytes.Buffer
 			zw := gzip.NewWriter(&buf)
 
-			_, err1 := zw.Write([]byte(km.json))
+			_, err1 := zw.Write(km.json)
 
 			err2 := zw.Close()
 
@@ -133,4 +134,70 @@ func logError(m error) error {
 	fn := runtime.FuncForPC(pc)
 
 	return fmt.Errorf("%s: %s", fn.Name(), m)
+}
+
+func getLiveManifestFields_WithIgnoredFields(ignoredFields []string, userProvided *kManifest, liveManifest *kManifest) string {
+
+	flattenedUser := Flatten(userProvided.resource.Object)
+	flattenedLive := Flatten(liveManifest.resource.Object)
+
+	// remove any fields from the user provided set or control fields that we want to ignore
+	fieldsToTrim := append([]string(nil), kubernetesControlFields...)
+	if len(ignoredFields) > 0 {
+		fieldsToTrim = append(fieldsToTrim, ignoredFields...)
+	}
+
+	for _, field := range fieldsToTrim {
+		delete(flattenedUser, field)
+
+		// check for any nested fields to ignore
+		for k := range flattenedUser {
+			if strings.HasPrefix(k, field+".") {
+				delete(flattenedUser, k)
+			}
+		}
+	}
+
+	// update the user provided flattened string with the live versions of the keys
+	// this implicitly excludes anything that the user didn't provide as it was added by kubernetes runtime (annotations/mutations etc)
+	var userKeys []string
+	for userKey, userValue := range flattenedUser {
+		normalizedUserValue := strings.TrimSpace(userValue)
+
+		// only include the value if it exists in the live version
+		// that is, don't add to the userKeys array unless the key still exists in the live manifest
+		if _, exists := flattenedLive[userKey]; exists {
+			userKeys = append(userKeys, userKey)
+			normalizedLiveValue := strings.TrimSpace(flattenedLive[userKey])
+			flattenedUser[userKey] = normalizedLiveValue
+			if normalizedUserValue != normalizedLiveValue {
+				log.Printf("[TRACE] yaml drift detected in %s for %s, was: %s now: %s", userProvided.GetSelfLink(), userKey, normalizedUserValue, normalizedLiveValue)
+			}
+		} else {
+			if normalizedUserValue != "" {
+				log.Printf("[TRACE] yaml drift detected in %s for %s, was %s now blank", userProvided.GetSelfLink(), userKey, normalizedUserValue)
+			}
+		}
+	}
+
+	sort.Strings(userKeys)
+	var returnedValues []string
+	for _, k := range userKeys {
+		returnedValues = append(returnedValues, fmt.Sprintf("%s=%s", k, flattenedUser[k]))
+	}
+
+	return strings.Join(returnedValues, ",")
+}
+
+var kubernetesControlFields = []string{
+	"status",
+	"metadata.finalizers",
+	"metadata.initializers",
+	"metadata.ownerReferences",
+	"metadata.creationTimestamp",
+	"metadata.generation",
+	"metadata.resourceVersion",
+	"metadata.uid",
+	"metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
+	"metadata.managedFields",
 }

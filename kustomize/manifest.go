@@ -491,3 +491,55 @@ func (km *kManifest) fmtErr(err error) error {
 		km.id().string(),
 		err)
 }
+
+func (km *kManifest) GetSelfLink() string {
+	selfLink := km.resource.GetSelfLink()
+	if len(selfLink) > 0 {
+		return selfLink
+	}
+
+	manifestID := km.id()
+
+	return buildSelfLink(manifestID.group, manifestID.namespace, manifestID.kind, manifestID.name)
+}
+
+// buildSelfLink creates a selfLink of the form:
+//
+//	"/apis/<apiVersion>/namespaces/<namespace>/<kind>s/<name>"
+//
+// The selfLink attribute is not available in Kubernetes 1.20+ so we need
+// to generate a consistent, unique ID for our Terraform resources.
+func buildSelfLink(apiVersion string, namespace string, kind string, name string) string {
+	var linkBuilder strings.Builder
+
+	// for any v1 api served objects, they used to be served from /api
+	// all others are served from /apis
+	if apiVersion == "v1" {
+		linkBuilder.WriteString("/api")
+	} else {
+		linkBuilder.WriteString("/apis")
+	}
+
+	if len(apiVersion) != 0 {
+		_, _ = fmt.Fprintf(&linkBuilder, "/%s", apiVersion)
+	}
+
+	if len(namespace) != 0 {
+		_, _ = fmt.Fprintf(&linkBuilder, "/namespaces/%s", namespace)
+	}
+
+	if len(kind) != 0 {
+		var suffix string
+		if strings.HasSuffix(kind, "s") {
+			suffix = "es"
+		} else {
+			suffix = "s"
+		}
+		_, _ = fmt.Fprintf(&linkBuilder, "/%s%s", strings.ToLower(kind), suffix)
+	}
+
+	if len(name) != 0 {
+		_, _ = fmt.Fprintf(&linkBuilder, "/%s", name)
+	}
+	return linkBuilder.String()
+}
