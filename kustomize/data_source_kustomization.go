@@ -149,7 +149,6 @@ func getKustomizeOptions(d *schema.ResourceData) (opts *krusty.Options) {
 	}
 
 	opts.PluginConfig.FnpLoadingOptions.EnableExec = enableExec
-	opts.PluginConfig.FnpLoadingOptions.EnableStar = enableStar
 	opts.PluginConfig.HelmConfig.Enabled = enableHelm
 
 	if enableHelm && kOpts["helm_path"] != nil {
